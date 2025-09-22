@@ -181,10 +181,27 @@ class ReActAgent:
     def _exec_tool(self, tool_name: str, args: Dict[str, Any]) -> Any:
         if tool_name not in self.tools:
             return {"error": f"Tool '{tool_name}' not available."}
+
+        spec = self.tools[tool_name]
+        schema = spec.args_schema or {}
+        props = set((schema.get("properties") or {}).keys())
+        required = set(schema.get("required") or [])
+
+        clean_args = {k: v for k, v in (args or {}).items() if k in props}
+        dropped = sorted(set((args or {}).keys()) - props)
+        missing = sorted(required - set(clean_args.keys()))
+
+        if missing:
+            return {"error": f"Missing required argument(s) for '{tool_name}': {', '.join(missing)}."}
+        if dropped:
+            clean_args["__dropped__"] = dropped
+
         try:
-            return self.tools[tool_name].func(**args)
+            return spec.func(**{k: v for k, v in clean_args.items() if k != "__dropped__"})
+        except TypeError as e:
+            return {"error": f"{tool_name} execution error: {e}", "note": {"dropped": dropped}}
         except Exception as e:
-            return {"error": str(e)}
+            return {"error": str(e), "note": {"dropped": dropped}}
 
     def _ask_next(
         self,
